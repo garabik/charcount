@@ -80,8 +80,6 @@ colour_invalid = 'on_red'
 # colour of control characters
 colour_controlchar = 'green'
 
-
-
 thr_hi = 0.08
 thr_lo = 0.001
 
@@ -102,6 +100,7 @@ def hfnum(n):
         new = int(round(1.*n/(1000**power)))
     r = str(new) + units[power]
     return r
+
 
 class FreqCounter:
     def __init__(self, stream, preprocessor=None):
@@ -132,20 +131,39 @@ class FreqCounterFile(FreqCounter):
 
 
 def is_ascii(c):
-    return 32 <= ord(c) <= 127
+    return all(32 <= ord(x) <= 127 for x in c)
 
 def is_ɑnum(c):
-    return c in string.ascii_letters + string.digits
+    return all(x in string.ascii_letters + string.digits for x in c)
+
+def is_ascii_control(c):
+    return all(ord(x)<32 for x in c)
 
 def is_invalid(c):
     "test if unicode character c is from an invalid utf-8, i.e. it is a lone surrogate"
-    return 0xdc80 <= ord(c) <= 0xdcff
+    return all(0xdc80 <= ord(x) <= 0xdcff for x in c)
+
+def combine_combining(txt):
+    "yield a sequence of characters, putting combining diacritical marks together with the base letters"
+    buff = ''
+    for c in txt:
+        if unicodedata.combining(c) and not is_invalid(c):
+            buff += c
+        else:
+            if buff:
+                yield buff
+            buff = c
+            # it does not make much sense to put combining characters over whitespace or control characters
+            if unicodedata.category(c)[0] in 'ZC': 
+                yield buff
+                buff = ''
+    if buff:
+        yield buff
 
 class CountsPrinterBasic():
     def __init__(self, freq_counter):
         self.freq_counter = freq_counter
         self.counts = freq_counter.counts
-
 
 class CountsPrinterPprint(CountsPrinterBasic):
 
@@ -157,25 +175,45 @@ class CountsPrinterCSV(CountsPrinterBasic):
     def print_counts(self, *args):
         writer = csv.writer(sys.stdout)
         for item in self.counts.items():
-            writer.writerow(item)
+            # silently drop surrogates
+            if not is_invalid(item[0]):
+                writer.writerow(item)
+
+
+def asian_like_len(txt):
+    "return length of txt in character cells, taking into account fullwidth asian characters (two cells) and combining characters (no cell)"
+    l = 0
+    for c in txt:
+        if unicodedata.combining(c):
+            continue
+        elif unicodedata.east_asian_width(c) in 'FW':
+            l += 2
+        else:
+            l += 1
+    return l
+
 
 class CountsPrinterNice(CountsPrinterBasic):
 
     def print_escape(self, c):
-        # assume unicode c
-        if ord(c) <= 32:
-            r = '{:02X}'.format(ord(c))
-        # surrogate escape for invalid UTF-8
-        elif is_invalid(c):
-            r = '{b:02X}'.format(b=ord(c) & 0xff)
-        elif unicodedata.category(c)[0] == 'C':
-            r = '<>' # control character
-        else:
-            r = c
-            if unicodedata.east_asian_width(c) not in 'FW':
-                r = ' '+r
-            if unicodedata.combining(c):
-                r = ' '+r
+        # assume unicode c, which can be composed of more characters
+        r = ''
+        for subc in c:
+            if ord(subc) <= 32:
+                r += '{:02X}'.format(ord(subc))
+            # surrogate escape for invalid UTF-8
+            elif is_invalid(subc):
+                r += '{b:02X}'.format(b=ord(subc) & 0xff)
+            elif unicodedata.category(subc)[0] == 'C':
+                r += '<>' # control character
+            else:
+                # if the string begins with a combining character, prepend it with space
+                if unicodedata.combining(subc) and not r:
+                    r = ' '
+                r += subc
+        l = asian_like_len(r)
+        padding = ' '*(2-l)
+        r = padding + r
         return r
 
     def print_counts(self, options):
@@ -209,7 +247,7 @@ class CountsPrinterNice(CountsPrinterBasic):
             cnt_f = hfnum(cnt)
             clr_thisch = clrch
             unirepr = '' # unicode representation U+xxxx
-            if ord(c) <= 32:
+            if is_ascii_control(c) <= 32:
                 clr_thisch = clr_ctrl
             if is_invalid(c):
                 clr_thisch = clrch_invalid
@@ -225,9 +263,11 @@ class CountsPrinterNice(CountsPrinterBasic):
                 except UnicodeDecodeError:
                     pass
             else:
-                name = unicodedata.name(c, '')
-                unirepr = 'U+{:04X} '.format(ord(c))
-                if unicodedata.category(c)[0]=='C':
+                name = '; '.join(unicodedata.name(x, '') for x in c)
+                unirepr = '; '.join('U+{:04X}'.format(ord(x)) for x in c)
+                if unirepr:
+                    unirepr += ' '
+                if unicodedata.category(c[0])[0]=='C':
                     clr_thisch = clr_ctrl
             clrn = clr_med
             if cnt < self.freq_counter.total_chars * thr_lo:
@@ -276,10 +316,14 @@ if __name__ == '__main__':
                        default = '',
                        help='Normalize the text before processing - one of NFC, NFD, NFKC, NFKD')
 
+    parser.add_argument('--split-combining', dest='combine_combining', action='store_const',
+                       const=False, default=True,
+                       help='Split combining diacritical characters from the base character for the purposes of tabular display. Default: do not split them.')
     parser.add_argument('--printer', dest='printer', action='store',
                        type=str,
                        default = 'nice',
                        help='Which way of printing the table to use. One of '+(', '.join( available_printers.keys() )))
+
 
     parser.add_argument('--sort', dest='sort', action='store',
                        type=str,
@@ -310,9 +354,14 @@ if __name__ == '__main__':
         files = rest
     DEBUG(1, 'files:', files)
 
-    preprocessor = None
+    _preprocessor = preprocessor = None
     if args.normalise:
-        preprocessor = lambda x: unicodedata.normalize(args.normalise, x)
+        _preprocessor = lambda x: unicodedata.normalize(args.normalise, x)
+
+    if args.combine_combining:
+        preprocessor = lambda x: combine_combining(_preprocessor(x))
+    elif _preprocessor:
+        preprocessor = _preprocessor
 
     if not files:
         freq_counter = FreqCounter(stream=sys.stdin, preprocessor=preprocessor)
