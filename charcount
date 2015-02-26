@@ -1,0 +1,325 @@
+#!/usr/bin/python3
+
+from __future__ import print_function
+
+import sys
+import string, unicodedata
+
+from pprint import pprint
+import csv
+
+from collections import Counter
+from math import log10
+
+try:
+    from argparse import ArgumentParser, REMAINDER
+    using_optparse = False
+except ImportError:
+    from optparse import OptionParser as ArgumentParser
+    using_optparse = True
+
+
+VERSION='0.1'
+
+def DEBUG(level, *msg, **args):
+    end = args.get('end', '\n')
+    if level<=debuglevel:
+        print(*msg, file=sys.stderr, end=end)
+        sys.stderr.flush()
+
+colours = {
+    'none'       :    "",
+    'default'    :    "\033[0m",
+    'bold'       :    "\033[1m",
+    'underline'  :    "\033[4m",
+    'blink'      :    "\033[5m",
+    'reverse'    :    "\033[7m",
+    'concealed'  :    "\033[8m",
+
+    'black'      :    "\033[30m",
+    'red'        :    "\033[31m",
+    'green'      :    "\033[32m",
+    'yellow'     :    "\033[33m",
+    'blue'       :    "\033[34m",
+    'magenta'    :    "\033[35m",
+    'cyan'       :    "\033[36m",
+    'white'      :    "\033[37m",
+
+    'on_black'   :    "\033[40m",
+    'on_red'     :    "\033[41m",
+    'on_green'   :    "\033[42m",
+    'on_yellow'  :    "\033[43m",
+    'on_blue'    :    "\033[44m",
+    'on_magenta' :    "\033[45m",
+    'on_cyan'    :    "\033[46m",
+    'on_white'   :    "\033[47m",
+
+    'beep'       :    "\007",
+}
+
+# some default definitions
+
+# colour of characters
+colour_char = 'white'
+
+# colour of unicode name
+colour_name = 'red'
+
+# colour of numbers, high count
+colour_hi = 'red'
+
+# colour of numbers, low count
+colour_lo = 'blue'
+
+# colour of number, medium count
+colour_med = 'magenta'
+
+# colour of invalid byte
+colour_invalid = 'on_red'
+
+# colour of control characters
+colour_controlchar = 'green'
+
+
+
+thr_hi = 0.08
+thr_lo = 0.001
+
+def hfnum(n):
+    "human readable number"
+    assert n >= 0
+    if n == 0:
+        return "0"
+    units = [" ", "k", "M", "G", "T", "P", "Z", "Y"]
+    power = int(log10(n)/3) # log10(1000)==3
+    if power < 0:
+        power = 0
+    if power >= len(units):
+        power = len(units)-1
+    new = int(round(1.*n/(1000**power)))
+    if new < 10 and power >= 1:
+        power -= 1
+        new = int(round(1.*n/(1000**power)))
+    r = str(new) + units[power]
+    return r
+
+class FreqCounter:
+    def __init__(self, stream, preprocessor=None):
+        self.stream = stream
+        self.counts = Counter()
+        self.classes = Counter()
+        self.total_chars = 0
+        self.preprocessor = preprocessor
+
+    def get_class(self, c):
+        return '1'
+
+    def make_counts(self):
+        for line in self.stream:
+            if self.preprocessor:
+                line = self.preprocessor(line)
+            for c in line:
+                self.counts[c] += 1
+                cls = self.get_class(c)
+                self.classes[cls] += 1
+        self.total_chars = sum(self.classes.values())
+
+
+class FreqCounterFile(FreqCounter):
+    def __init__(self, fname, preprocessor=None):
+        stream = open(fname, errors="surrogateescape")
+        FreqCounter.__init__(self, stream, preprocessor)
+
+
+def is_ascii(c):
+    return 32 <= ord(c) <= 127
+
+def is_ɑnum(c):
+    return c in string.ascii_letters + string.digits
+
+def is_invalid(c):
+    "test if unicode character c is from an invalid utf-8, i.e. it is a lone surrogate"
+    return 0xdc80 <= ord(c) <= 0xdcff
+
+class CountsPrinterBasic():
+    def __init__(self, freq_counter):
+        self.freq_counter = freq_counter
+        self.counts = freq_counter.counts
+
+
+class CountsPrinterPprint(CountsPrinterBasic):
+
+    def print_counts(self, *args):
+        pprint(self.counts)
+
+class CountsPrinterCSV(CountsPrinterBasic):
+
+    def print_counts(self, *args):
+        writer = csv.writer(sys.stdout)
+        for item in self.counts.items():
+            writer.writerow(item)
+
+class CountsPrinterNice(CountsPrinterBasic):
+
+    def print_escape(self, c):
+        # assume unicode c
+        if ord(c) <= 32:
+            r = '{:02X}'.format(ord(c))
+        # surrogate escape for invalid UTF-8
+        elif is_invalid(c):
+            r = '{b:02X}'.format(b=ord(c) & 0xff)
+        elif unicodedata.category(c)[0] == 'C':
+            r = '<>' # control character
+        else:
+            r = c
+            if unicodedata.east_asian_width(c) not in 'FW':
+                r = ' '+r
+            if unicodedata.combining(c):
+                r = ' '+r
+        return r
+
+    def print_counts(self, options):
+        items = self.counts.items()
+        if options.sort == 'count':
+            items = sorted(items, key=lambda x:x[1], reverse=False)
+        if options.sort == 'count-':
+            items = sorted(items, key=lambda x:x[1], reverse=True)
+        elif options.sort == 'char':
+            items = sorted(items)
+        elif options.sort == 'char-':
+            items = sorted(items, reverse=True)
+        elif options.sort == 'hash':
+            items = sorted(items, key=hash)
+        clrr = colours['default'] # reset colour
+        clrch = colours[colour_char]
+        clr_ctrl = colours[colour_controlchar]
+        clrch_invalid = colours[colour_invalid]
+        clrnm = colours[colour_name]
+        clr_lo = colours[colour_lo]
+        clr_med = colours[colour_med]
+        clr_hi = colours[colour_hi]
+        for c, cnt in items:
+            if options.hide_ascii and is_ascii(c):
+                continue
+            if options.hide_ɑnum and is_ɑnum(c):
+                continue
+            if options.hide_eol and c in '\r\n':
+                continue
+            c_esc = self.print_escape(c)
+            cnt_f = hfnum(cnt)
+            clr_thisch = clrch
+            unirepr = '' # unicode representation U+xxxx
+            if ord(c) <= 32:
+                clr_thisch = clr_ctrl
+            if is_invalid(c):
+                clr_thisch = clrch_invalid
+                byte_ = ord(c) & 0xff
+                name = 'invalid utf-8'
+                if byte_ <= 0xbf:
+                    cp8 = 'cp1252'
+                else:
+                    cp8 = 'iso8859-1'
+                try:
+                    in8bit = str(bytes([byte_]), cp8)
+                    name += ', would be ‘{in8bit}’ in {cp8}'.format(**locals())
+                except UnicodeDecodeError:
+                    pass
+            else:
+                name = unicodedata.name(c, '')
+                unirepr = 'U+{:04X} '.format(ord(c))
+                if unicodedata.category(c)[0]=='C':
+                    clr_thisch = clr_ctrl
+            clrn = clr_med
+            if cnt < self.freq_counter.total_chars * thr_lo:
+                clrn = clr_lo
+            elif self.freq_counter.total_chars * thr_hi < cnt:
+                clrn = clr_hi
+            print('{clrn}{cnt_f:>5s}{clrr} {clr_thisch}{c_esc}{clrr} {clrnm}{unirepr}{name}{clrr}'.format(**locals()))
+
+
+available_printers = {
+    'pprint': CountsPrinterPprint,
+    'nice'  : CountsPrinterNice,
+    'csv'   : CountsPrinterCSV,
+    }
+
+
+if __name__ == '__main__':
+
+    parser = ArgumentParser(prog='charfreq',
+            description='Display table of character frequencies from given text in a human readable form.')
+    if using_optparse:
+        DEBUG(3, 'using optparse')
+        parser.add_argument = parser.add_option
+        parser.parse_known_args = parser.parse_args
+        parser.disable_interspersed_args()
+
+    parser.add_argument('-v', dest='debuglevel', action='count',
+                       default = 0,
+                       help='Be verbose (repeat for more)')
+
+    parser.add_argument('--type', dest='input_type', action='store',
+                       type=str,
+                       default = 'utf-8',
+                       help='Type of input: utf-8 (the default), bytes, words')
+    parser.add_argument("--hide-ascii", action="store_const", dest="hide_ascii",
+                       const=True, default=False,
+                       help="Hide printable ASCII characters from the output (but still count them)")
+    parser.add_argument("--hide-ɑnum", "--hide-alphanum", "--hide-ascii-alphanum", action="store_const", dest="hide_ɑnum",
+                       const=True, default=False,
+                       help="Hide printable ASCII alphanumeric characters from the output (but still count them)")
+    parser.add_argument("--hide-eol", action="store_const", dest="hide_eol",
+                       const=True, default=False,
+                       help="Hide end-of-line characters (\\r and \\n) from the output (but still count them)")
+    parser.add_argument('--normalise', '--normalize', dest='normalise', action='store',
+                       type=str,
+                       default = '',
+                       help='Normalize the text before processing - one of NFC, NFD, NFKC, NFKD')
+
+    parser.add_argument('--printer', dest='printer', action='store',
+                       type=str,
+                       default = 'nice',
+                       help='Which way of printing the table to use. One of '+(', '.join( available_printers.keys() )))
+
+    parser.add_argument('--sort', dest='sort', action='store',
+                       type=str,
+                       default = 'count-',
+                       help='How to sort the results: char (by characters ascending), char- (by characters descending), count (by count ascending), count- (by count descending, the default), hash')
+
+
+    if not using_optparse:
+        parser.add_argument('--version', action='version',
+                       version='%(prog)s '+VERSION)
+        parser.add_argument('files', help='Files to process', default=None, nargs='*')
+        #parser.add_argument('args', nargs=REMAINDER)
+
+    args, rest = parser.parse_known_args()
+
+    global debuglevel
+    debuglevel = args.debuglevel
+    DEBUG(3, 'args:', str(args))
+    DEBUG(3, 'optparse:', using_optparse)
+
+    input_type = args.input_type
+
+    if 'files' in dir(args) and args.files:
+#        print(repr(args.files), repr(args.args))
+        #files = [args.files] + args.args # + ' '+ ' '.join(args.args)
+        files = args.files
+    else:
+        files = rest
+    DEBUG(1, 'files:', files)
+
+    preprocessor = None
+    if args.normalise:
+        preprocessor = lambda x: unicodedata.normalize(args.normalise, x)
+
+    if not files:
+        freq_counter = FreqCounter(stream=sys.stdin, preprocessor=preprocessor)
+    else:
+        freq_counter = FreqCounterFile(files[0], preprocessor=preprocessor)
+
+    freq_counter.make_counts()
+    counts_printer = available_printers[args.printer](freq_counter)
+    counts_printer.print_counts(args)
+
