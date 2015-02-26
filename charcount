@@ -359,7 +359,10 @@ if __name__ == '__main__':
         _preprocessor = lambda x: unicodedata.normalize(args.normalise, x)
 
     if args.combine_combining:
-        preprocessor = lambda x: combine_combining(_preprocessor(x))
+        if _preprocessor:
+            preprocessor = lambda x: combine_combining(_preprocessor(x))
+        else:
+            preprocessor = combine_combining
     elif _preprocessor:
         preprocessor = _preprocessor
 
