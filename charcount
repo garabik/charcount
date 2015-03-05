@@ -107,20 +107,33 @@ class FreqCounter:
         self.stream = stream
         self.counts = Counter()
         self.classes = Counter()
+        self.contexts = {} # KWIC-like contexts for the given character
         self.total_chars = 0
         self.preprocessor = preprocessor
 
     def get_class(self, c):
         return '1'
 
+    def get_context(self, c, pos, line):
+        context_width = 3
+        context_left = line[pos-context_width:pos]
+        context_right = line[pos+len(c):pos+len(c)+context_width]
+        return context_left, context_right
+
+
     def make_counts(self):
         for line in self.stream:
             if self.preprocessor:
                 line = self.preprocessor(line)
+            line = list(line)
+            pos = 0
             for c in line:
                 self.counts[c] += 1
                 cls = self.get_class(c)
                 self.classes[cls] += 1
+                if c not in self.contexts:
+                    self.contexts[c] = self.get_context(c, pos, line)
+                pos += 1
         self.total_chars = sum(self.classes.values())
 
 
@@ -164,6 +177,7 @@ class CountsPrinterBasic():
     def __init__(self, freq_counter):
         self.freq_counter = freq_counter
         self.counts = freq_counter.counts
+        self.contexts = freq_counter.contexts
 
 class CountsPrinterPprint(CountsPrinterBasic):
 
@@ -244,6 +258,9 @@ class CountsPrinterNice(CountsPrinterBasic):
             if options.hide_eol and c in '\r\n':
                 continue
             c_esc = self.print_escape(c)
+            context_left, context_right = self.contexts[c]
+            context_left = ''.join(context_left)
+            context_right = ''.join(context_right)
             cnt_f = hfnum(cnt)
             clr_thisch = clrch
             unirepr = '' # unicode representation U+xxxx
@@ -274,8 +291,7 @@ class CountsPrinterNice(CountsPrinterBasic):
                 clrn = clr_lo
             elif self.freq_counter.total_chars * thr_hi < cnt:
                 clrn = clr_hi
-            print('{clrn}{cnt_f:>5s}{clrr} {clr_thisch}{c_esc}{clrr} {clrnm}{unirepr}{name}{clrr}'.format(**locals()))
-
+            print('{clrn}{cnt_f:>5s}{clrr} {clr_thisch}{c_esc}{clrr} {context_left}{c_esc}{context_right} {clrnm}{unirepr}{name}{clrr}'.format(**locals()))
 
 available_printers = {
     'pprint': CountsPrinterPprint,
