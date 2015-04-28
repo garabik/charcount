@@ -128,6 +128,9 @@ class FreqCounter:
             line = list(line)
             pos = 0
             for c in line:
+                if c not in self.counts:
+                    print (repr(c).replace("'", ""), file=sys.stderr, end='')
+                    sys.stderr.flush()
                 self.counts[c] += 1
                 cls = self.get_class(c)
                 self.classes[cls] += 1
@@ -135,6 +138,7 @@ class FreqCounter:
                     self.contexts[c] = self.get_context(c, pos, line)
                 pos += 1
         self.total_chars = sum(self.classes.values())
+        print (file=sys.stderr)
 
 
 class FreqCounterFile(FreqCounter):
@@ -291,7 +295,9 @@ class CountsPrinterNice(CountsPrinterBasic):
                 clrn = clr_lo
             elif self.freq_counter.total_chars * thr_hi < cnt:
                 clrn = clr_hi
-            print('{clrn}{cnt_f:>5s}{clrr} {clr_thisch}{c_esc}{clrr} {context_left}{c_esc}{context_right} {clrnm}{unirepr}{name}{clrr}'.format(**locals()))
+#            print('{clrn}{cnt_f:>5s}{clrr} {clr_thisch}{c_esc}{clrr} {context_left}{c_esc}{context_right} {clrnm}{unirepr}{name}{clrr}'.format(**locals()))
+            print('{clrn}{cnt_f:>5s}{clrr} {clr_thisch}{c_esc}{clrr} {clrnm}{unirepr}{name}{clrr}'.format(**locals()))
+
 
 available_printers = {
     'pprint': CountsPrinterPprint,
