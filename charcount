@@ -8,7 +8,7 @@ import string, unicodedata
 from pprint import pprint
 import csv
 
-from collections import Counter
+from collections import Counter, defaultdict
 from math import log10
 
 try:
@@ -346,6 +346,10 @@ if __name__ == '__main__':
                        default = 'nice',
                        help='Which way of printing the table to use. One of '+(', '.join( available_printers.keys() )))
 
+    parser.add_argument('--colour', '--color', dest='use_colour', action='store',
+                       type=str,
+                       default = 'yes',
+                       help='Use colour (with "nice" printer)')
 
     parser.add_argument('--sort', dest='sort', action='store',
                        type=str,
@@ -395,5 +399,7 @@ if __name__ == '__main__':
 
     freq_counter.make_counts()
     counts_printer = available_printers[args.printer](freq_counter)
+    if args.use_colour.lower() not in ('1', 'yes', 'true'):
+        colours = defaultdict(lambda :'')
     counts_printer.print_counts(args)
 
