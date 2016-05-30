@@ -2,7 +2,7 @@
 
 from __future__ import print_function
 
-import sys
+import sys, re
 import string, unicodedata
 
 from pprint import pprint
@@ -177,6 +177,12 @@ def combine_combining(txt):
     if buff:
         yield buff
 
+def strip_xml(text):
+    text = ''.join(text)
+    r = re.sub('<.+?>', '', text)
+    for c in r:
+        yield c
+
 class CountsPrinterBasic():
     def __init__(self, freq_counter):
         self.freq_counter = freq_counter
@@ -209,7 +215,6 @@ def asian_like_len(txt):
         else:
             l += 1
     return l
-
 
 class CountsPrinterNice(CountsPrinterBasic):
 
@@ -265,7 +270,10 @@ class CountsPrinterNice(CountsPrinterBasic):
             context_left, context_right = self.contexts[c]
             context_left = ''.join(context_left)
             context_right = ''.join(context_right)
-            cnt_f = hfnum(cnt)
+            if args.number_format=='human':
+                cnt_f = hfnum(cnt)
+            else:
+                cnt_f = str(cnt)
             clr_thisch = clrch
             unirepr = '' # unicode representation U+xxxx
             if is_ascii_control(c) <= 32:
@@ -346,10 +354,20 @@ if __name__ == '__main__':
                        default = 'nice',
                        help='Which way of printing the table to use. One of '+(', '.join( available_printers.keys() )))
 
+    parser.add_argument("--xml", action="store_const", dest="xml",
+                       const=True, default=False,
+                       help="Assume input is in XML and do not count character inside tags")
+
     parser.add_argument('--colour', '--color', dest='use_colour', action='store',
                        type=str,
                        default = 'yes',
                        help='Use colour (with "nice" printer)')
+
+    parser.add_argument('--machine-readable', dest='number_format', action='store_const',
+                       const='machine',
+                       default = 'human',
+                       help='Use machine readable (i.e. raw counts) number format with "nice" printer')
+
 
     parser.add_argument('--sort', dest='sort', action='store',
                        type=str,
@@ -392,10 +410,15 @@ if __name__ == '__main__':
     elif _preprocessor:
         preprocessor = _preprocessor
 
+    prp = preprocessor
+    if args.xml:
+        preprocessor = lambda x: strip_xml(prp(x))
+
     if not files:
         freq_counter = FreqCounter(stream=sys.stdin, preprocessor=preprocessor)
     else:
         freq_counter = FreqCounterFile(files[0], preprocessor=preprocessor)
+
 
     freq_counter.make_counts()
     counts_printer = available_printers[args.printer](freq_counter)
