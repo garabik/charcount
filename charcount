@@ -2,7 +2,7 @@
 
 from __future__ import print_function
 
-import sys, re
+import sys, re, copy
 import string, unicodedata
 
 from pprint import pprint
@@ -103,13 +103,13 @@ def hfnum(n):
 
 
 class FreqCounter:
-    def __init__(self, stream, preprocessor=None):
+    def __init__(self, stream, preprocessors=None):
         self.stream = stream
         self.counts = Counter()
         self.classes = Counter()
         self.contexts = {} # KWIC-like contexts for the given character
         self.total_chars = 0
-        self.preprocessor = preprocessor
+        self.preprocessors = preprocessors
 
     def get_class(self, c):
         return '1'
@@ -120,12 +120,14 @@ class FreqCounter:
         context_right = line[pos+len(c):pos+len(c)+context_width]
         return context_left, context_right
 
-
     def make_counts(self):
         for line in self.stream:
-            if self.preprocessor:
-                line = self.preprocessor(line)
-            line = list(line)
+            if self.preprocessors:
+                preps = copy.copy(self.preprocessors)
+                while preps:
+                    prp = preps.pop()
+                    line = prp(line)
+            line = list(line) # line is either text or list, depending on the last preprocessor
             pos = 0
             for c in line:
                 if c not in self.counts:
@@ -142,9 +144,9 @@ class FreqCounter:
 
 
 class FreqCounterFile(FreqCounter):
-    def __init__(self, fname, preprocessor=None):
+    def __init__(self, fname, preprocessors=None):
         stream = open(fname, errors="surrogateescape")
-        FreqCounter.__init__(self, stream, preprocessor)
+        FreqCounter.__init__(self, stream, preprocessors)
 
 
 def is_ascii(c):
@@ -178,10 +180,8 @@ def combine_combining(txt):
         yield buff
 
 def strip_xml(text):
-    text = ''.join(text)
     r = re.sub('<.+?>', '', text)
-    for c in r:
-        yield c
+    return r
 
 class CountsPrinterBasic():
     def __init__(self, freq_counter):
@@ -348,7 +348,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--split-combining', dest='combine_combining', action='store_const',
                        const=False, default=True,
-                       help='Split combining diacritical characters from the base character for the purposes of tabular display. Default: do not split them.')
+                       help='Display combining diacritical characters separately from the previous character. Default: count them together with the previous characte.')
     parser.add_argument('--printer', dest='printer', action='store',
                        type=str,
                        default = 'nice',
@@ -398,26 +398,26 @@ if __name__ == '__main__':
         files = rest
     DEBUG(1, 'files:', files)
 
-    _preprocessor = preprocessor = None
-    if args.normalise:
-        _preprocessor = lambda x: unicodedata.normalize(args.normalise, x)
+    # preprocessors are functions that will be applied to the text in reverse order
+    preprocessors = []
 
+    # this one has to be applied last, since it returns a list
     if args.combine_combining:
-        if _preprocessor:
-            preprocessor = lambda x: combine_combining(_preprocessor(x))
-        else:
-            preprocessor = combine_combining
-    elif _preprocessor:
-        preprocessor = _preprocessor
+        preprocessors.append(combine_combining)
 
-    prp = preprocessor
+    # this on will be applied on text
+    if args.normalise:
+        preprocessors.append(lambda x: unicodedata.normalize(args.normalise, x))
+
+    # this one will be applied first
     if args.xml:
-        preprocessor = lambda x: strip_xml(prp(x))
+        preprocessors.append(strip_xml)
+
 
     if not files:
-        freq_counter = FreqCounter(stream=sys.stdin, preprocessor=preprocessor)
+        freq_counter = FreqCounter(stream=sys.stdin, preprocessors=preprocessors)
     else:
-        freq_counter = FreqCounterFile(files[0], preprocessor=preprocessor)
+        freq_counter = FreqCounterFile(files[0], preprocessors=preprocessors)
 
 
     freq_counter.make_counts()
