@@ -328,10 +328,11 @@ if __name__ == '__main__':
                        default = 0,
                        help='Be verbose (repeat for more)')
 
-    parser.add_argument('--type', dest='input_type', action='store',
-                       type=str,
-                       default = 'utf-8',
-                       help='Type of input: utf-8 (the default), bytes, words')
+# TODO
+#    parser.add_argument('--type', dest='input_type', action='store',
+#                       type=str,
+#                       default = 'utf-8',
+#                       help='Type of input: utf-8 (the default), bytes, words')
     parser.add_argument("--hide-ascii", action="store_const", dest="hide_ascii",
                        const=True, default=False,
                        help="Hide printable ASCII characters from the output (but still count them)")
@@ -388,7 +389,7 @@ if __name__ == '__main__':
     DEBUG(3, 'args:', str(args))
     DEBUG(3, 'optparse:', using_optparse)
 
-    input_type = args.input_type
+    #input_type = args.input_type
 
     if 'files' in dir(args) and args.files:
 #        print(repr(args.files), repr(args.args))
